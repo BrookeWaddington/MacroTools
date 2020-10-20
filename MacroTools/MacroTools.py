@@ -1,20 +1,28 @@
-import os
-from functools import partial
-from PySide2 import QtWidgets
+# MacroTools.py
+# v1.0
+#
+# Record, playback and save actions performed in Maya as macros.
+# Includes basic text editing capabilities.
+#
+# Brooke Waddington
+# https://github.com/BrookeWaddington/MacroTools
+#
+# Based on the Brave Rabbit tool Actor Tools by Ingo Clemens.
+#
+
 import maya.OpenMaya as OpenMaya
-import maya.OpenMayaUI as OpenMayaUI
+import maya.OpenMayaUI as omUI
 import maya.cmds as cmds
 import maya.mel as mel
+
+from functools import partial
+from PySide2 import QtWidgets, QtGui, QtCore
 from shiboken2 import wrapInstance
+import os
+
 
 # TODO: FEATURE LIST
-#       - add to shelf button
-#       - delete line by line with buttons
-#       - add nice number formatting on left side of scroll field
-#       - bind keys to macros ie "press shift + 6 and macro6 runs"
-#       - [MEDIUM] add warnings for editing/saving/cancelling
-#       - figure out how to get maya console output without writing to a file
-#       - live updating of scroll field text as output is recorded
+#       - [Bug][Can't Recreate] canceling creating a macro from the dialog causes a nonetype error
 #       - [DONE] clear a macro contents without re-recording
 #       - [DONE] append recording from any line "start new recording at line X"
 #       - [DONE] make Run Macro work
@@ -24,39 +32,50 @@ from shiboken2 import wrapInstance
 #       - [DONE] error when trying to record the same macro directly after recording
 #       - [DONE] clear Macro button
 #       - [DONE] rebuild how backups work with a more generic backup method
-#       - [DONE] install PyQt4 and sip to change text color of record button
-#       - [LOW] move clear button to more logical "editing" part of UI
-#       - clearer UI for text edit options and to differentiate from the script editor readout
-#       - macro button grid for browsing macros to use
-#       - rename a macro
-#       - options menu with preferences?
-#       - copy to clipboard (button made)
-#       - quick edit mode
+#       - [DONE] install PyQt4/5 and sip to change text color of record button (PySide2 instead)
+#       - [DONE] clearer UI for text edit options and to differentiate from the script editor readout
+#       - [DONE] copy to clipboard (button made)
+#       - [DONE] grey out EDIT button when editing and save/cancel vice versa
+#       - [DONE][Bug] clearing macro doesn't create proper Undo behaviour
+#       - [DONE] if no macro is selected grey out and CLEAR the scrollfield
+#       - [DONE] rename a macro
+#       - [DONE] option menu: open destination folder for macros
+#       - [DONE] option menu: change macro folder path with warning
+#       - confirm before changing the active macro as all unsaved data will be lost
+#       - option menu: prefix get/set
+#       - [BackLog] icons for stop/record/play/delete/edit/clear
+#       - [BackLog] macro button grid for browsing macros to use
+#       - [BackLog] bind keys to macros ie "press shift + 6 and macro6 runs"
+
 
 # PySide2 custom UI example
 # https://luckcri.blogspot.com/2018/04/pyside2-ui-example-for-maya.html
-#
 
 
-class MacroTools:
+class MacroTools():
 
     def __init__(self):
         self.version = '0.01 beta'
         self.creator = 'Brooke Waddington'
         self.copyright = 'Brooke Waddington'
         self.windowName = 'MacroTools'
-        self.macroFolderPath = 'C:/Users/Brooke/Desktop/Macros'
+        self.macroFolderPath = ''
         self.macroPrefix = ''  # No prefix
         self.recording = False
 
-        # UI
+        # Rename UI
+        self.renameWindow = ''
+        self.renameNameField = ''
+        self.renameFinishButton = ''
+        self.renameIncludePrefix = ''
+
+        # Main UI
         self.window = 'MacroToolsWindow'
         self.createMacroButton = ''
         self.debugButton = ''
         self.recordStartButton = ''
-        self.recordStartButtonColor = (0.4, 0.1, 0.1)  # Dark red
         self.recordStopButton = ''
-        self.runMacroButton = ''
+        self.playMacroButton = ''
         self.clearMacroButton = ''
         self.deleteMacroButton = ''
         self.macroEditButton = ''
@@ -65,7 +84,7 @@ class MacroTools:
         self.macroRedoEditButton = ''
         self.macroCancelEditButton = ''
         self.macroCopyToClipboardButton = ''
-        self.macroQuickEditButton = ''
+        self.macroRenameButton = ''
 
         self.macroFileField = ''
 
@@ -77,6 +96,17 @@ class MacroTools:
         # TODO: Guessed the gray value for buttons, cant seem to query it. Find the exact value
         self.buttonDefaultColor = (0.38, 0.38, 0.38)  # Medium gray
         self.toggleColor = False
+        self.recordingOnStyleSheet = (
+                "QPushButton:disabled {"
+                    "color: white;"
+                    "background-color: rgb(150, 10, 10) }")
+        self.recordingOffStyleSheet = (
+                "QPushButton:disabled {"
+                    "background-color: rgb(75, 75, 75) }"
+                "QPushButton {"
+                    "background-color: rgb(90, 90, 90);"
+                "QPushButton:hover {"
+                    "background-color: rgb(90, 90, 90) }")
 
         # TODO: Organize these variables to be clearer
         self.activeMacro = ''
@@ -85,9 +115,7 @@ class MacroTools:
         self.newMacroFile = ''
         self.newMacroPath = ''
 
-        self.macrosFolderPath = ''
         self.macroOption = ''
-
         self.openMacroFile = ''
 
         self.activeMacroBackUps = []
@@ -97,13 +125,31 @@ class MacroTools:
         self.old_echoAllLines = ''
         self.old_showLineNumbersIsOn = ''
         self.old_stackTraceIsOn = ''
-
         self.suppressErrors = ''
         self.suppressInfo = ''
         self.suppressResults = ''
         self.suppressStackWindow = ''
         self.suppressWarnings = ''
 
+        # #Example Style Sheet
+        # self.stylesheet = (
+        #     "QPushButton {"
+        #         "color: red;"
+        #         "background-color: green;"
+        #         "border-style: outset;"
+        #         "border-width: 2px;"
+        #         "border-radius: 5px;"
+        #         "border-color: beige;"
+        #         "font: bold 14px;"
+        #         "min-width: 10em;"
+        #         "padding: 6px }"
+        #     "QPushButton:hover {"
+        #         "color: green;"
+        #         "background-color: blue }"
+        #     "QPushButton:pressed {"
+        #         "color: blue;"
+        #         "background-color: red }")
+        self._checkMacroFolderPath()
         self._buildUI()
 
     def _buildUI(self):
@@ -117,126 +163,112 @@ class MacroTools:
 
         # Set the window size
         if cmds.windowPref(self.window, exists=True):
-            cmds.windowPref(self.window, e=True, w=600, h=150)
+            cmds.windowPref(self.window, e=True, w=600, h=288)
 
-        cmds.window(self.window, t=self.windowName, w=600, h=150, mb=True)
+        cmds.window(self.window, t=self.windowName, w=600, h=288, mb=True)
         layout = cmds.formLayout(p=self.window)
 
-        # Left Column UI
-        leftColumn = cmds.columnLayout(adjustableColumn=True, p=layout, w=300)
+        cmds.menu(l='Options')
+        cmds.menuItem(l='Open Macro Folder Path', c=partial(self._openMacroFolderPath))
+        cmds.menuItem(l='Change Macro Folder Path', c=partial(self._changeMacroFolderPath, True))
+        cmds.menuItem(l='Update Macro Prefix')#, c=partial(self._openAbout))
+
+        # Left Column UI Holds the Debug Button, Create Macro frameLayout, and Active Macro frameLayout
+        leftColumn = cmds.columnLayout(adjustableColumn=True, p=layout, w=300, h=190)
+        cmds.formLayout(layout, e=True, af=(leftColumn, 'top', 5))
+        cmds.formLayout(layout, e=True, af=(leftColumn, 'left', 5))
 
         # Debug Button
         self.debugButton = cmds.button(l='Debug Button', w=50, command=self._debugButton)
-        debugButton = wrapInstance(long(OpenMayaUI.MQtUtil.findControl(self.debugButton)), QtWidgets.QPushButton)
-        debugButton.setStyleSheet(
-            "QPushButton {"
-                "background-color: green;"
-                "border-style: outset;"
-                "border-width: 0px;"
-                "border-radius: 5px;"
-                "border-color: beige;"
-                #"font: bold 14px;"
-                "min-width: 10em;"
-                "padding: 6px;}"
-            "QPushButton:hover {"
-                "background-color: blue}"
-            "QPushButton:pressed {" 
-                "background-color: red }")
 
-        # Left Side Create Macros
-        cmds.frameLayout(l='Create Macro', marginWidth=10, marginHeight=10)
-        self.macroFileField = cmds.textFieldButtonGrp(l='Macro File' + self.macroPrefix,
-                                                      buttonLabel='...',
-                                                      cw3=(60, 160, 30),
-                                                      co3=(0, 5, 0),
-                                                      ct3=('both', 'both', 'both'),
-                                                      bc=partial(self._openFileList))
-
+        # Frame Layout Create Macros
+        cmds.frameLayout(l='Create Macro', marginWidth=10, marginHeight=10, collapsable=True)
+        self.macroFileField = cmds.textFieldButtonGrp(
+            l='Macro File' + self.macroPrefix,
+            buttonLabel='...',
+            cw3=(60, 160, 30),
+            co3=(0, 5, 0),
+            ct3=('both', 'both', 'both'),
+            bc=partial(self._openFileList))
         self.createMacroButton = cmds.button(l='Create New Macro', w=50, command=self._checkCreateMacro)
         cmds.separator(h=5, style='none')
         cmds.setParent('..')
 
-        # Left Side Active Macro Options
-        cmds.frameLayout(l='Active Macro Options', marginWidth=10, marginHeight=10)
+        # Frame Layout Active Macro
+        cmds.frameLayout(l='Active Macro', marginWidth=10, marginHeight=10)
         self.macroOption = cmds.optionMenu(cc=partial(self._loadMacroButton))
-        cmds.separator(h=5, style='doubleDash')
-
-        # Record button with custom style
-        self.recordStartButton = cmds.button(l='Start Recording', w=50, command=self._checkRecordingStart)
-        recordButton = wrapInstance(long(OpenMayaUI.MQtUtil.findControl(self.recordStartButton)), QtWidgets.QPushButton)
-        recordButton.setStyleSheet(
-            "QPushButton:disabled {"
-                "background-color: rgb(75, 75, 75) }"
-            "QPushButton {"
-                "background-color: rgb(200, 10, 10);"
-                "border-style: outset;"
-                "border-width: 0px;"
-                "border-radius: 5px;"
-                "border-color: beige;"
-                #"font: bold 14px;"
-                "min-width: 10em;"
-                "padding: 6px; }"
-            "QPushButton:hover {"
-                "background-color: rgb(225, 10, 10) }"
-            "QPushButton:pressed {" 
-                "background-color: rgb(100, 10, 10) }")
-
-        self.recordStopButton = cmds.button(l='Stop Recording', w=50, command=partial(self._recording, False))
-        cmds.separator(h=5, style='none')
-        self.runMacroButton = cmds.button(l='Run', w=50, command=self._runMacroButton)
-        self.macroQuickEditButton = cmds.button(l='Quick Edit', w=50, command=self._macroQuickEditButton)
-        self.clearMacroButton = cmds.button(l='Clear', w=50, command=self._clearMacroButton)
-        self.deleteMacroButton = cmds.button(l='Delete', w=50, command=self._deleteMacroButton)
         cmds.setParent('..')
+        cmds.setParent('..')  # Close the leftColumn
+
+        # Stop Recording Button
+        self.recordStopButton = cmds.button(l='Stop', w=88, h=30, en=False, command=partial(self._recording, False))
+        cmds.formLayout(layout, e=True, af=(self.recordStopButton, 'left', 20))
+        cmds.formLayout(layout, e=True, aoc=(self.recordStopButton, 'bottom', -40, leftColumn))
+
+        # Record Button
+        self.recordStartButton = cmds.button(l='Record', w=88, h=30, command=partial(self._recording, True))
+        cmds.formLayout(layout, e=True, ac=(self.recordStartButton, 'left', 5, self.recordStopButton))
+        cmds.formLayout(layout, e=True, aoc=(self.recordStartButton, 'top', 0, self.recordStopButton))
+
+        # Play Button
+        self.playMacroButton = cmds.button(l='Play', w=88, h=30, command=self._runMacroButton)
+        cmds.formLayout(layout, e=True, ac=(self.playMacroButton, 'left', 5, self.recordStartButton))
+        cmds.formLayout(layout, e=True, aoc=(self.playMacroButton, 'top', 0, self.recordStopButton))
+
+        # Delete Button
+        self.deleteMacroButton = cmds.button(l='Delete', w=88, h=30, command=self._deleteMacroButton)
+        cmds.formLayout(layout, e=True, af=(self.deleteMacroButton, 'left', 20))
+        cmds.formLayout(layout, e=True, aoc=(self.deleteMacroButton, 'bottom', -40, self.recordStopButton))
+
+        # Quick Edit Button
+        self.macroRenameButton = cmds.button(l='Rename', w=88, h=30, command=self._openRenameWindow)
+        cmds.formLayout(layout, e=True, ac=(self.macroRenameButton, 'left', 5, self.deleteMacroButton))
+        cmds.formLayout(layout, e=True, aoc=(self.macroRenameButton, 'top', 0, self.deleteMacroButton))
+
+        # Clear Button
+        self.clearMacroButton = cmds.button(l='Clear', w=88, h=30, command=self._clearMacroButton)
+        cmds.formLayout(layout, e=True, ac=(self.clearMacroButton, 'left', 5, self.macroRenameButton))
+        cmds.formLayout(layout, e=True, aoc=(self.clearMacroButton, 'top', 0, self.deleteMacroButton))
 
         # Right Side Scroll Field
         self.macroScrollField = cmds.scrollField(
             editable=False,
             backgroundColor=self.scrollFieldIDisabledBGColor,
             wordWrap=False,
-            p=layout,
-            w=150)
+            p=layout)
 
-        # Right Side Buttons
-        self.macroEditButton = cmds.button(l='Edit', p=layout, w=40, command=self._editButton)
-        self.macroSaveEditButton = cmds.button(l='Save', p=layout, w=40, command=self._saveButton)
-        self.macroUndoEditButton = cmds.button(l='Undo', p=layout, w=40, command=self._undoButton)
-        self.macroRedoEditButton = cmds.button(l='Redo', p=layout, w=40, command=self._redoButton)
-        self.macroCancelEditButton = cmds.button(l='Cancel', p=layout, w=40, command=self._cancelButton)
-        self.macroCopyToClipboardButton = cmds.button(l='Copy', p=layout, w=40, command=self._copyToClipboardButton)
-
-        # Create Layout
-        # Left Column
-        cmds.formLayout(layout, e=True, af=(leftColumn, 'top', 5))
-        cmds.formLayout(layout, e=True, af=(leftColumn, 'left', 5))
-
-        # Scroll Field
         cmds.formLayout(layout, e=True, aoc=(self.macroScrollField, 'top', 0, leftColumn))
         cmds.formLayout(layout, e=True, ac=(self.macroScrollField, 'left', 5, leftColumn))
         cmds.formLayout(layout, e=True, af=(self.macroScrollField, 'bottom', 40))
         cmds.formLayout(layout, e=True, af=(self.macroScrollField, 'right', 5))
 
         # Copy to Clipboard
+        self.macroCopyToClipboardButton = cmds.button(l='Copy', p=layout, w=40, command=self._copyToClipboardButton)
         cmds.formLayout(layout, e=True, af=(self.macroCopyToClipboardButton, 'top', 10))
-        cmds.formLayout(layout, e=True, af=(self.macroCopyToClipboardButton, 'right', 10))
+        cmds.formLayout(layout, e=True, af=(self.macroCopyToClipboardButton, 'right', 20))
 
         # Edit Button
+        self.macroEditButton = cmds.button(l='Edit', p=layout, w=40, command=self._editButton)
         cmds.formLayout(layout, e=True, aoc=(self.macroEditButton, 'bottom', -30, self.macroScrollField))
         cmds.formLayout(layout, e=True, ac=(self.macroEditButton, 'left', 5, leftColumn))
 
         # Save Button
+        self.macroSaveEditButton = cmds.button(l='Save', en=False, p=layout, w=40, command=self._saveButton)
         cmds.formLayout(layout, e=True, aoc=(self.macroSaveEditButton, 'top', 0, self.macroEditButton))
         cmds.formLayout(layout, e=True, ac=(self.macroSaveEditButton, 'left', 5, self.macroEditButton))
 
         # Undo Button
+        self.macroUndoEditButton = cmds.button(l='Undo', p=layout, w=40, command=self._undoButton)
         cmds.formLayout(layout, e=True, aoc=(self.macroUndoEditButton, 'top', 0, self.macroEditButton))
         cmds.formLayout(layout, e=True, ac=(self.macroUndoEditButton, 'left', 5, self.macroSaveEditButton))
 
         # Redo Button
+        self.macroRedoEditButton = cmds.button(l='Redo', p=layout, w=40, command=self._redoButton)
         cmds.formLayout(layout, e=True, aoc=(self.macroRedoEditButton, 'top', 0, self.macroEditButton))
         cmds.formLayout(layout, e=True, ac=(self.macroRedoEditButton, 'left', 5, self.macroUndoEditButton))
 
         # Cancel Button
+        self.macroCancelEditButton = cmds.button(l='Cancel', en=False, p=layout, w=40, command=self._cancelButton)
         cmds.formLayout(layout, e=True, aoc=(self.macroCancelEditButton, 'bottom', -30, self.macroScrollField))
         cmds.formLayout(layout, e=True, af=(self.macroCancelEditButton, 'right', 5))
 
@@ -248,71 +280,127 @@ class MacroTools:
 
     def _debugButton(self, *args):
         """
-        Debugging button, handy for testing
+        Debugging button, handy for testing.
         """
-        if self.toggleColor:
-            recordButton = wrapInstance(long(OpenMayaUI.MQtUtil.findControl(self.recordStartButton)), QtWidgets.QPushButton)
-            recordButton.setStyleSheet(
-                "QPushButton:disabled {"
-                "background-color: rgb(75, 75, 75) }"
-                "QPushButton {"
-                "background-color: rgb(10, 200, 10);"
-                "border-style: outset;"
-                "border-width: 0px;"
-                "border-radius: 5px;"
-                "border-color: beige;"
-                # "font: bold 14px;"
-                "min-width: 10em;"
-                "padding: 6px; }"
-                "QPushButton:hover {"
-                "background-color: rgb(10, 225, 10) }"
-                "QPushButton:pressed {"
-                "background-color: rgb(10, 100, 10) }")
-            self.toggleColor = False
-        else:
-            recordButton = wrapInstance(long(OpenMayaUI.MQtUtil.findControl(self.recordStartButton)), QtWidgets.QPushButton)
-            recordButton.setStyleSheet(
-                "QPushButton:disabled {"
-                "background-color: rgb(75, 75, 75) }"
-                "QPushButton {"
-                "background-color: rgb(200, 10, 10);"
-                "border-style: outset;"
-                "border-width: 0px;"
-                "border-radius: 5px;"
-                "border-color: beige;"
-                # "font: bold 14px;"
-                "min-width: 10em;"
-                "padding: 6px; }"
-                "QPushButton:hover {"
-                "background-color: rgb(225, 10, 10) }"
-                "QPushButton:pressed {"
-                "background-color: rgb(100, 10, 10) }")
-            self.toggleColor = True
+        directory = cmds.optionVar(q='MacroToolsDirectory')
+        print(directory)
 
-    @staticmethod
-    def _clamp(value, min, max):
-        if value < min:
-            return min
-        elif value > max:
-            return max
-        else:
-            return value
+    def _openMacroFolderPath(self, *args):
+        """
+        Try to open the specific file path
+        """
+        try:
+            os.startfile(self.macroFolderPath)
+        except WindowsError:
+            OpenMaya.MGlobal_displayError('File directory not found.')
+
+    def _checkMacroFolderPath(self, *args):
+        """
+        Check if a directory path exists. Prompt the user to point to it if it does not.
+        """
+        title = 'Macro Directory Missing'
+        message = 'Please select a location for Macros to be stored.'
+        icon = 'warning'
+
+        self.macroFolderPath = cmds.optionVar(q='MacroToolsDirectory')
+
+        if not os.path.exists(self.macroFolderPath) and self._dialogBool(title, message, icon):
+            self._changeMacroFolderPath(refresh=False)
+
+    def _changeMacroFolderPath(self, refresh=True, *args):
+        """
+        Change the macro folder path and save to preferences
+        """
+        self.macroFolderPath = cmds.fileDialog2(
+            fileMode=3,
+            okCaption='OK',
+            caption='Select or Create Macro Folder Path')[0]
+
+        cmds.optionVar(sv=('MacroToolsDirectory', self.macroFolderPath))
+
+        if refresh:
+            self._listMacros()
+
+    def _openRenameWindow(self, *args):
+        """
+        Opens the window for renaming the active macro.
+        """
+        # Disable the main UI while renaming
+        #self._toggleActiveUI(enable=False)
+
+        if cmds.window(self.renameWindow, exists=True):
+            cmds.deleteUI(self.renameWindow)
+        # Set the window size
+        if cmds.windowPref(self.renameWindow, exists=True):
+            cmds.windowPref(self.renameWindow, e=True, w=300, h=75)
+
+        if cmds.optionVar(ex='macroToolsRenameIncludePrefix'):
+            includePrefixCheck = cmds.optionVar(q='macroToolRenameIncludePrefix')
+
+        # get the user preferences
+        includePrefixCheck = False
+
+        # Create the Window and UI
+        self.renameWindow = cmds.window(title="Rename Macro", widthHeight=(300, 75))
+        cmds.columnLayout(adj=True, rowSpacing=5, w=300, h=75)
+        self.renameNameField = cmds.textFieldGrp(
+            l='New Name',
+            cw2=(100, 160),
+            co2=(0, 5),
+            ct2=('both', 'both'),
+            tx=self.activeMacro)
+        self.renameIncludePrefix = cmds.checkBoxGrp(
+            l='Include prefix',
+            v1=includePrefixCheck,
+            cw2=(106, 30),
+            co2=(5, 0),
+            ct2=('right', 'both'))
+        cmds.button(self.renameFinishButton, l='Rename', command=self._macroRenameButton)
+        cmds.setParent('..')
+
+        cmds.showWindow(self.renameWindow)
+
+    def _macroRenameButton(self, *args):
+        """
+        Rename the active macro.
+        """
+        # Save old name and create new name
+        newName = cmds.textFieldGrp(self.renameNameField, q=True, tx=True)
+        if self.renameIncludePrefix:
+            newName = self.macroPrefix + newName
+
+        oldPath = self.activeMacroPath
+        self.activeMacroPath = self.activeMacroPath.rsplit('/', 1)[0] + '/' + newName + '.txt'
+
+        # Rename the macro file
+        try:
+            os.rename(oldPath, self.activeMacroPath)
+        except WindowsError:
+            OpenMaya.MGlobal_displayError('File name is already taken.')
+            self.activeMacroPath = oldPath
+            return
+
+        # Refresh macro list
+        self._listMacros()
+        cmds.optionMenu(self.macroOption, e=True, v=newName)
+        #self._loadMacroButton()
+
+        # Set the preferences
+        cmds.optionVar(iv=('macroToolRenameIncludePrefix', cmds.checkBoxGrp(self.renameIncludePrefix, q=True, v1=True)))
+
+        # Close the rename window
+        cmds.deleteUI(self.renameWindow)
 
     def _copyToClipboardButton(self, *args):
         """
-        Copy the active macro to the the clipboard
+        Copy the text in the macro scroll field to the the clipboard.
         """
-        print('_copyToClipboardButton')
-
-    def _macroQuickEditButton(self, *args):
-        """
-        Toggle quick edit mode to remove lines of code
-        """
-        print('_macroQuickEditButton')
+        textToClipBoard = cmds.scrollField(self.macroScrollField, q=True, text=True)
+        QtWidgets.QApplication.clipboard().setText(textToClipBoard)
 
     def _undoButton(self, *args):
         """
-        Save the last string in the list of backups to the active macro, decrementing
+        Save the last string in the list of backups to the active macro, decrementing.
         """
         self._updateUndoRedoButtonStates()
 
@@ -328,7 +416,7 @@ class MacroTools:
 
     def _redoButton(self, *args):
         """
-        Save the next string in the list of backups to the active macro, incrementing
+        Save the next string in the list of backups to the active macro, incrementing.
         """
         self._updateUndoRedoButtonStates()
 
@@ -344,7 +432,7 @@ class MacroTools:
 
     def _updateUndoRedoButtonStates(self, *args):
         """
-        Disable or enable the redo and undo buttons depending on the current backup index
+        Disable or enable the redo and undo buttons depending on the current backup index.
         """
         index = self.backUpsIndex
         length = len(self.activeMacroBackUps)
@@ -356,31 +444,52 @@ class MacroTools:
         else:
             cmds.button(self.macroUndoEditButton, e=True, enable=True)
 
+        # Disable Redo
         if index >= length:
             cmds.button(self.macroRedoEditButton, e=True, enable=False)
+        # Enable Redo
         else:
             cmds.button(self.macroRedoEditButton, e=True, enable=True)
 
     def _editButton(self, *args):
         """
-        Enable editing of the scroll field window
+        Enable editing of the scroll field window and toggle editing UI elements on/off.
         """
-        # self._addActiveMacroBackUp()
+        # Enable Editing
         cmds.scrollField(self.macroScrollField, e=True, editable=True, backgroundColor=self.scrollFieldActiveBGColor)
+
+        # Toggle UI for editing
+        cmds.button(self.macroEditButton, e=True, en=False)
+        cmds.button(self.macroSaveEditButton, e=True, en=True)
+        cmds.button(self.macroCancelEditButton, e=True, en=True)
+        self._toggleActiveUI(enable=False, includeStopButton=False, includeCreateUI=True)
 
     def _saveButton(self, *args):
         """
-        Save the current scrollField text to the active macro
+        Save the current scrollField text to the active macro and toggle editing UI elements on/off.
         """
         self._addActiveMacroBackUp()
         newText = cmds.scrollField(self.macroScrollField, q=True, text=True)
+
+        cmds.button(self.macroEditButton, e=True, en=True)
+        cmds.button(self.macroSaveEditButton, e=True, en=False)
+        cmds.button(self.macroCancelEditButton, e=True, en=False)
+        self._toggleActiveUI(enable=True, includeStopButton=False, includeCreateUI=True)
+
         self._saveStringToMacro(newText)
         self._addActiveMacroBackUp()
 
     def _cancelButton(self, *args):
         """
-        Reset the scroll field
+        Reset the scroll field and toggle editing UI elements on/off.
         """
+        # Toggle UI for editing
+        cmds.button(self.macroEditButton, e=True, en=True)
+        cmds.button(self.macroSaveEditButton, e=True, en=False)
+        cmds.button(self.macroCancelEditButton, e=True, en=False)
+        self._toggleActiveUI(enable=True, includeStopButton=False, includeCreateUI=True)
+
+        # Reset the scroll field
         self._resetMacroScrollField()
 
     def _saveStringToMacro(self, newText='', *args):
@@ -405,8 +514,8 @@ class MacroTools:
         """
         # Dialog Message Contents
         title = 'Create Macro'
-        icon = 'question'
         message = ' already exists. Do you want to replace it?'  # Macro name is added to message
+        icon = 'question'
 
         # If the new macro name is already taken ask the user to overwrite
         newMacroName = cmds.textFieldButtonGrp(self.macroFileField, q=True, tx=True)
@@ -477,6 +586,8 @@ class MacroTools:
             fileFilter='Text Files (*.txt)',
             okCaption='OK',
             caption='Select or Create a %s File' % 'New Macro')
+        if not fileName:
+            return
 
         # Add prefix to file name
         prefixAdded = fileName[0].replace(os.path.basename(fileName[0]),
@@ -490,6 +601,19 @@ class MacroTools:
 
         # Update field with new macro name
         cmds.textFieldButtonGrp(self.macroFileField, e=True, text=os.path.basename(self.newMacroPath).split('.')[0])
+
+    # def _checkRecordingStart(self, *args):
+    #     """
+    #     Check the active macro before recording,
+    #     ask for user input if the file is not empty
+    #     """
+    #     with open(self.activeMacroPath) as self.openMacroFile:
+    #         if self.openMacroFile.read():
+    #             self._recording(True)
+    #         # The active file is empty, start recording
+    #         else:
+    #             self._recording(True)
+    #             return
 
     def _recording(self, recording, *args):
         """
@@ -511,13 +635,15 @@ class MacroTools:
             self._setConsoleRecordingSettings()
 
             # Set recording UI state
-            self._toggleActiveUI(enable=False, includeStopButton=False)
-            #cmds.button(self.recordStartButton, e=True, backgroundColor=self.recordStartButtonColor)
+            self._toggleActiveUI(enable=False)
+            cmds.button(self.recordStopButton, e=True, en=True)
+            recordButton = wrapInstance(long(omUI.MQtUtil.findControl(self.recordStartButton)), QtWidgets.QPushButton)
+            recordButton.setStyleSheet(self.recordingOnStyleSheet)
 
             # Set the active macro to the console readout file
             cmds.scriptEditorInfo(historyFilename=self.activeMacroPath)
             print('recording started...')
-            cmds.scriptEditorInfo(clearHistory=True, writeHistory=True)
+            cmds.scriptEditorInfo(writeHistory=True)
 
         # Stop recording
         elif recording is False:
@@ -527,31 +653,18 @@ class MacroTools:
 
             # Stop recording
             cmds.scriptEditorInfo(writeHistory=False)
-            self.openMacroFile.close()
             self._resetConsoleSettings()
 
-            # enable UI
-            self._toggleActiveUI(enable=True)
-            #cmds.button(self.recordStartButton, e=True, backgroundColor=self.buttonDefaultColor)
+            # Enable UI
+            self._toggleActiveUI(enable=True, includeStopButton=False)
+            recordButton = wrapInstance(long(omUI.MQtUtil.findControl(self.recordStartButton)), QtWidgets.QPushButton)
+            recordButton.setStyleSheet(self.recordingOffStyleSheet)
+            cmds.button(self.recordStopButton, e=True, en=False)
 
             # Review the recording in the scroll field
             self._resetMacroScrollField()
 
-            print('recording stopped...')
-
-    def _checkRecordingStart(self, *args):
-        """
-        Check the active macro before recording,
-        ask for user input if the file is not empty
-        """
-        # Ask user if they want to overwrite the active file and start recording
-        with open(self.activeMacroPath) as self.openMacroFile:
-            if self.openMacroFile.read():
-                self._recording(True)
-            # The active file is empty, start recording
-            else:
-                self._recording(True)
-                return
+            print('recording stopped')
 
     def _toggleActiveUI(self, enable, includeCreateUI=True, includeStopButton=True):
         """
@@ -570,46 +683,42 @@ class MacroTools:
 
         # UI that requires an active macro
         cmds.button(self.recordStartButton, e=True, en=enable)
-        cmds.button(self.runMacroButton, e=True, en=enable)
+        cmds.button(self.playMacroButton, e=True, en=enable)
         cmds.button(self.clearMacroButton, e=True, en=enable)
         cmds.button(self.deleteMacroButton, e=True, en=enable)
         cmds.button(self.macroEditButton, e=True, en=enable)
         cmds.button(self.macroUndoEditButton, e=True, en=enable)
         cmds.button(self.macroRedoEditButton, e=True, en=enable)
-        cmds.button(self.macroSaveEditButton, e=True, en=enable)
+        # cmds.button(self.macroSaveEditButton, e=True, en=enable)
+        # cmds.button(self.macroCancelEditButton, e=True, en=enable)
         cmds.button(self.macroCopyToClipboardButton, e=True, en=enable)
-        cmds.button(self.macroCancelEditButton, e=True, en=enable)
-        cmds.button(self.macroQuickEditButton, e=True, en=enable)
+        cmds.button(self.macroRenameButton, e=True, en=enable)
 
     def _runMacroButton(self, *args):
-        """
+        """        # cmds.textField(self.renameNameField)
+        # cmds.button(self.renameFinishButton, l='Rename')rename
         Playback the active macro
         """
         print('playing back last recording...' + '\n')
         mel.eval('source \"' + self.activeMacroPath + '\";')
-        print('playback finished...')
+        print('playback finished.')
 
     def _clearMacroButton(self, *args):
         """
         Clears the contents from the active macro
         """
-        # Dialog Message Contents
-        title = 'Clear Macro'
-        icon = 'question'
-        message = 'The macro \"' + self.activeMacro + '\" will be cleared of all contents, do you wish to continue?'
-
         # Add backup before clearing
         self._addActiveMacroBackUp()
 
         # Clear the active macro after confirming with the user
         with open(self.activeMacroPath) as openMacroFile:
             if openMacroFile.read():
-                # User Confirmation
-                if self._dialogBool(title, message, icon) is True:
-                    open(self.activeMacroPath, 'w').close()
-                    self._resetMacroScrollField()
+                open(self.activeMacroPath, 'w').close()
+                self._resetMacroScrollField()
 
-    # TODO: Add comments
+        # Add backup after clearing
+        self._addActiveMacroBackUp()
+
     def _getMacros(self, *args):
         """
         Return a list of macros based on the active folder
@@ -626,16 +735,16 @@ class MacroTools:
 
         return macros
 
-    # TODO: Add comments
     def _listMacros(self, *args):
         """
-        refresh the option menu to
-        show all available characters
+        Refresh the option menu to show all available macros.
         """
+        # Clear the option menu before updating
         items = cmds.optionMenu(self.macroOption, q=True, ill=True)
         if items is not None:
             cmds.deleteUI(items)
 
+        # Create a new list of macros with short names.
         macros = self._getMacros()
         if len(macros):
             cmds.menuItem('Select Macro', p=self.macroOption)
@@ -650,45 +759,54 @@ class MacroTools:
 
     def _loadMacroButton(self, *args):
         """
-        Load the name of the selected macro which is stored in the description file,
-        then show the macro in the scroll field. Activate the buttons if a valid macro is loaded
+        Load the name of the selected macro then show the macro in the scroll field.
+        Update the UI and save data after confirming with the user.
         """
-        enable = False
+        # By default assume the UI will be disabled
+        enableUI = False
 
         if cmds.optionMenu(self.macroOption, q=True, sl=True) != 1:
             self.activeMacro = cmds.optionMenu(self.macroOption, q=True, v=True)
             self.activeMacroPath = self.macroFolderPath + '/' + self.macroPrefix + self.activeMacro + ".txt"
-            # print('// Loaded Macro \'%s\' from \'%s\'' % (self.activeMacro, self.activeMacroPath))
             self._resetMacroScrollField()
 
             # Clear any backups from previous active macro and add an initial backup
             del self.activeMacroBackUps[:]
             self.backUpsIndex = 0
+            enableUI = True
+        # Clear contents when no macro is selected
+        elif cmds.optionMenu(self.macroOption, q=True, sl=True) == 1:
+            cmds.scrollField(self.macroScrollField, e=True, editable=False, text='')
+            del self.activeMacroBackUps[:]
+            self.backUpsIndex = 0
 
-            enable = True
-
-        # Turn off the UI elements that require an active macro
-        # do not include the create macro UI
-        self._toggleActiveUI(enable, False)
+        # Toggle the UI elements that require an active macro
+        # Do not include the create macro UI elements
+        self._toggleActiveUI(enableUI, includeCreateUI=False, includeStopButton=False)
         self._updateUndoRedoButtonStates()
 
         # Clear the active macro if no macro is selected from the list
-        if not enable:
+        if not enableUI:
             self.activeMacro = ''
 
-    # TODO: Add comments
     def _addActiveMacroBackUp(self):
         """
-        Get and Set the macro back up here, only add unique entries
+        Add a new macro back up here, only add unique entries
         """
         with open(self.activeMacroPath) as openMacroFile:
+            # Get the contents of the macro
             newBackUp = openMacroFile.read()
+
+            # If there are already backups, check if the previous back
+            # up is the same as the new one and add the new backup
             if len(self.activeMacroBackUps) != 0:
                 previousBackUp = ''.join(map(str, self.activeMacroBackUps[-1:]))
                 if previousBackUp != newBackUp and newBackUp is not False:
                     self.activeMacroBackUps.append(newBackUp)
                     self.backUpsIndex += 1
                     self._updateUndoRedoButtonStates()
+
+            # If there are no other back ups and this one isn't empty add the new backup
             elif newBackUp is not False:
                 self.activeMacroBackUps.append(newBackUp)
                 self.backUpsIndex += 1
@@ -709,6 +827,7 @@ class MacroTools:
                 editable=False,
                 backgroundColor=self.scrollFieldIDisabledBGColor,
                 text=macroText)
+
 
     @staticmethod
     def _dialogBool(title, message, icon):
@@ -772,3 +891,12 @@ class MacroTools:
         self.old_echoAllLines = cmds.optionVar(q='echoAllLines')
         self.old_showLineNumbersIsOn = cmds.optionVar(q='showLineNumbersIsOn')
         self.old_stackTraceIsOn = cmds.optionVar(q='stackTraceIsOn')
+
+    @staticmethod
+    def _clamp(value, min, max):
+        if value < min:
+            return min
+        elif value > max:
+            return max
+        else:
+            return value
