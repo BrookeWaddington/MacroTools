@@ -52,14 +52,14 @@ import os
 # https://luckcri.blogspot.com/2018/04/pyside2-ui-example-for-maya.html
 
 
-class MacroTools():
+class MacroTools:
 
     def __init__(self):
         self.version = '0.01 beta'
         self.creator = 'Brooke Waddington'
         self.copyright = 'Brooke Waddington'
         self.windowName = 'MacroTools'
-        self.macroFolderPath = ''
+        self.macroFolderPath = 'null'  # Using a null arg with os.path.exists causes an error
         self.macroPrefix = ''  # No prefix
         self.recording = False
 
@@ -171,7 +171,9 @@ class MacroTools():
         cmds.menu(l='Options')
         cmds.menuItem(l='Open Macro Folder Path', c=partial(self._openMacroFolderPath))
         cmds.menuItem(l='Change Macro Folder Path', c=partial(self._changeMacroFolderPath, True))
-        cmds.menuItem(l='Update Macro Prefix')#, c=partial(self._openAbout))
+
+        # Commented out until the rest of the prefix functionality is built
+        #cmds.menuItem(l='Update Macro Prefix')#, c=partial(self._openAbout))
 
         # Left Column UI Holds the Debug Button, Create Macro frameLayout, and Active Macro frameLayout
         leftColumn = cmds.columnLayout(adjustableColumn=True, p=layout, w=300, h=190)
@@ -304,8 +306,15 @@ class MacroTools():
 
         self.macroFolderPath = cmds.optionVar(q='MacroToolsDirectory')
 
-        if not os.path.exists(self.macroFolderPath) and self._dialogBool(title, message, icon):
-            self._changeMacroFolderPath(refresh=False)
+        # If the folder path preferences are null ask user to change it
+        if not self.macroFolderPath:
+            if self._dialogBool(title, message, icon):
+                self._changeMacroFolderPath(refresh=False)
+
+        # If the folder path can not be found ask the user to change it
+        elif not os.path.exists(self.macroFolderPath):
+            if self._dialogBool(title, message, icon):
+                self._changeMacroFolderPath(refresh=False)
 
     def _changeMacroFolderPath(self, refresh=True, *args):
         """
