@@ -8,21 +8,9 @@
 # https://github.com/BrookeWaddington/MacroTools
 #
 # Based on the Brave Rabbit tool Actor Tools by Ingo Clemens.
-#
-
-import maya.OpenMaya as OpenMaya
-import maya.OpenMayaUI as omUI
-import maya.cmds as cmds
-import maya.mel as mel
-
-from functools import partial
-from PySide2 import QtWidgets, QtGui, QtCore
-from shiboken2 import wrapInstance
-import os
-
 
 # TODO: FEATURE LIST
-#       - [Bug][Can't Recreate] canceling creating a macro from the dialog causes a nonetype error
+#       - [Bug] canceling creating a macro from the dialog causes a nonetype error
 #       - [DONE] clear a macro contents without re-recording
 #       - [DONE] append recording from any line "start new recording at line X"
 #       - [DONE] make Run Macro work
@@ -47,9 +35,18 @@ import os
 #       - [BackLog] macro button grid for browsing macros to use
 #       - [BackLog] bind keys to macros ie "press shift + 6 and macro6 runs"
 
-
 # PySide2 custom UI example
 # https://luckcri.blogspot.com/2018/04/pyside2-ui-example-for-maya.html
+
+import maya.OpenMaya as OpenMaya
+import maya.OpenMayaUI as omUI
+import maya.cmds as cmds
+import maya.mel as mel
+
+from functools import partial
+from PySide2 import QtWidgets, QtGui, QtCore
+from shiboken2 import wrapInstance
+import os
 
 
 class MacroTools:
@@ -293,7 +290,7 @@ class MacroTools:
         """
         try:
             os.startfile(self.macroFolderPath)
-        except WindowsError:
+        except OSError:
             OpenMaya.MGlobal_displayError('File directory not found.')
 
     def _checkMacroFolderPath(self, *args):
@@ -320,10 +317,13 @@ class MacroTools:
         """
         Change the macro folder path and save to preferences
         """
-        self.macroFolderPath = cmds.fileDialog2(
+        newDirectory = cmds.fileDialog2(
             fileMode=3,
             okCaption='OK',
-            caption='Select or Create Macro Folder Path')[0]
+            caption='Select or Create Macro Folder Path')
+
+        if newDirectory:
+            self.macroFolderPath = newDirectory[0]
 
         cmds.optionVar(sv=('MacroToolsDirectory', self.macroFolderPath))
 
@@ -358,12 +358,13 @@ class MacroTools:
             co2=(0, 5),
             ct2=('both', 'both'),
             tx=self.activeMacro)
-        self.renameIncludePrefix = cmds.checkBoxGrp(
-            l='Include prefix',
-            v1=includePrefixCheck,
-            cw2=(106, 30),
-            co2=(5, 0),
-            ct2=('right', 'both'))
+        # Commented out prefix option until it is properly added in
+        # self.renameIncludePrefix = cmds.checkBoxGrp(
+        #     l='Include prefix',
+        #     v1=includePrefixCheck,
+        #     cw2=(106, 30),
+        #     co2=(5, 0),
+        #     ct2=('right', 'both'))
         cmds.button(self.renameFinishButton, l='Rename', command=self._macroRenameButton)
         cmds.setParent('..')
 
@@ -384,7 +385,7 @@ class MacroTools:
         # Rename the macro file
         try:
             os.rename(oldPath, self.activeMacroPath)
-        except WindowsError:
+        except OSError:
             OpenMaya.MGlobal_displayError('File name is already taken.')
             self.activeMacroPath = oldPath
             return
