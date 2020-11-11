@@ -297,7 +297,7 @@ class MacroTools:
         # MacOS
         else:
             try:
-                subprocess.call([open, self.macroFolderPath])
+                subprocess.call(['open', self.macroFolderPath])
             except OSError:
                 OpenMaya.MGlobal_displayError('File directory not found.')
 
