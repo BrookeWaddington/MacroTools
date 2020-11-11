@@ -2,6 +2,8 @@
 Record, play, manage and edit actions in Maya
 
 ## Setup Instructions
+Tested on macOS Catilina and Windows 10 for Maya 2020.
+
 1. Add the contents of the Macro Tools folder to your maya script directory. 
 <br /> Windows: _C:\Users\[UserName]\Documents\maya\2020\prefs\scripts_ 
 <br /> MacOS: _/Users/[UserName]/Documents/maya/2020/scripts_
