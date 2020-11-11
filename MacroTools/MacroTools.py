@@ -160,9 +160,9 @@ class MacroTools:
 
         # Set the window size
         if cmds.windowPref(self.window, exists=True):
-            cmds.windowPref(self.window, e=True, w=600, h=288)
+            cmds.windowPref(self.window, e=True, w=600, h=340)
 
-        cmds.window(self.window, t=self.windowName, w=600, h=288, mb=True)
+        cmds.window(self.window, t=self.windowName, w=600, h=340, mb=True)
         layout = cmds.formLayout(p=self.window)
 
         cmds.menu(l='Options')
@@ -178,7 +178,7 @@ class MacroTools:
         cmds.formLayout(layout, e=True, af=(leftColumn, 'left', 5))
 
         # Debug Button
-        self.debugButton = cmds.button(l='Debug Button', w=50, command=self._debugButton)
+        #self.debugButton = cmds.button(l='Debug Button', w=50, command=self._debugButton)
 
         # Frame Layout Create Macros
         cmds.frameLayout(l='Create Macro', marginWidth=10, marginHeight=10, collapsable=True)
