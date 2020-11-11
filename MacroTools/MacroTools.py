@@ -46,7 +46,7 @@ import maya.mel as mel
 from functools import partial
 from PySide2 import QtWidgets, QtGui, QtCore
 from shiboken2 import wrapInstance
-import os
+import os, sys, subprocess
 
 
 class MacroTools:
@@ -288,10 +288,18 @@ class MacroTools:
         """
         Try to open the specific file path
         """
-        try:
-            os.startfile(self.macroFolderPath)
-        except OSError:
-            OpenMaya.MGlobal_displayError('File directory not found.')
+        # Windows
+        if sys.platform == 'win32':
+            try:
+                os.startfile(self.macroFolderPath)
+            except OSError:
+                OpenMaya.MGlobal_displayError('File directory not found.')
+        # MacOS
+        else:
+            try:
+                subprocess.call([open, self.macroFolderPath])
+            except OSError:
+                OpenMaya.MGlobal_displayError('File directory not found.')
 
     def _checkMacroFolderPath(self, *args):
         """
